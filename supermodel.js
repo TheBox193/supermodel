@@ -62,6 +62,7 @@
     // option.
     associate: function(model, other) {
       if (!this.inverse) return;
+      model.trigger('associate', this.name, this.inverse, model, other);
       model.trigger('associate:' + this.inverse, model, other);
     },
 
@@ -69,6 +70,7 @@
     // option.
     dissociate: function(model, other) {
       if (!this.inverse) return;
+      model.trigger('dissociate', this.name, this.inverse, model, other);
       model.trigger('dissociate:' + this.inverse, model, other);
     },
 
