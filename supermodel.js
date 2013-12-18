@@ -411,7 +411,10 @@
     //   Defaults to '_' + `name`.
     one: function(name, options) {
       options.name = name;
-      new One(this.model, options);
+      var assoc = new One(this.model, options);
+      if(options.chain===false){
+        return assoc;
+      }
       return this;
     },
 
@@ -425,15 +428,17 @@
     //   inverse association.
     // * **through** - (*required for many-to-many associations*) The name of the
     //   through association.
-    // * **source** - (*required for many-to-many associations*) For many-to-one
-    //   associations, the attribute where nested data is stored. For many-to-many
-    //   associations, the name of the indirect association.
+    // * **source** - (*required for many-to-many associations*) The attribute
+    //   where nested data is stored.
     // * **store** - The property to store the association in.
     //   Defaults to '_' + `name`.
     many: function(name, options) {
       options.name = name;
       var Association = options.through ? ManyToMany : ManyToOne;
-      new Association(this.model, options);
+      var assoc = new Association(this.model, options);
+      if(options.chain===false){
+        return assoc;
+      }
       return this;
     }
 
