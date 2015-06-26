@@ -1,24 +1,31 @@
-(function (root, callback) {
+(function (factory) {
+  if (typeof define === 'function' && define.amd) {
+    // AMD. Register as an anonymous module.
+    define(['underscore', 'jquery', 'backbone'], factory);
+  } else {
+    // Browser globals
+    factory(_, jQuery, Backbone);
+  }
+}(function(_, $, Backbone){
 
-  // AMD
-  if (typeof define !== 'undefined' && define.amd) {
-    define(['exports', 'backbone', 'underscore'], callback);
+  if( !_ || !$ || !Backbone){
+    throw 'Please include Underscore, jQuery, and Backbone before Supermodel';
   }
 
-  // CommonJS
-  else if (typeof exports !== 'undefined') {
-    callback(exports, require('backbone'), require('underscore'));
-  }
+  // The global object.
+  var root = this;
 
-  // Globals
-  else {
-    callback(root.Supermodel = {}, root.Backbone, root._);
-  }
-
-}(this, function (Supermodel, Backbone, _) {
+  // Expose Supermodel to the global object.
+  var Supermodel = root.Supermodel = {};
 
   // Current version.
   Supermodel.VERSION = '0.0.4';
+
+  // Local reference to Collection.
+  var Collection = Backbone.Collection;
+
+  // Use Backbone's `extend` for sugar.
+  var extend = Backbone.Model.extend;
 
   // # Association
   //
@@ -49,13 +56,14 @@
     if (this.create) model.all().on('add', this.create, this);
   };
 
+  Association.extend = extend;
+
   _.extend(Association.prototype, {
 
     // Notify `model` of its association with `other` using the `inverse`
     // option.
     associate: function(model, other) {
       if (!this.inverse) return;
-      model.trigger('associate', this.name, this.inverse, model, other);
       model.trigger('associate:' + this.inverse, model, other);
     },
 
@@ -63,7 +71,6 @@
     // option.
     dissociate: function(model, other) {
       if (!this.inverse) return;
-      model.trigger('dissociate', this.name, this.inverse, model, other);
       model.trigger('dissociate:' + this.inverse, model, other);
     },
 
@@ -90,19 +97,19 @@
   // ## One
   //
   // One side of a one-to-one or one-to-many association.
-  var One = function(model, options) {
-    this.required(options, 'inverse', 'model');
-    Association.apply(this, arguments);
-    _.extend(this, _.pick(options, 'inverse', 'model', 'id'));
-    _.defaults(this, {
-      id: this.name + '_id'
-    });
-    model.all()
-      .on('associate:' + this.name, this.replace, this)
-      .on('dissociate:' + this.name, this.remove, this);
-  };
+  var One = Association.extend({
 
-  _.extend(One.prototype, Association.prototype, {
+    constructor: function(model, options) {
+      this.required(options, 'inverse', 'model');
+      Association.apply(this, arguments);
+      _.extend(this, _.pick(options, 'inverse', 'model'));
+      _.defaults(this, {
+        id: this.name + '_id'
+      });
+      model.all()
+        .on('associate:' + this.name, this.replace, this)
+        .on('dissociate:' + this.name, this.remove, this);
+    },
 
     // Assign the getter/setter when a model is created.
     create: function(model) {
@@ -126,7 +133,7 @@
     // If `source` is provided, use it to initialize the association after
     // removing it from the response object.
     parse: function(model, resp) {
-      if (!resp || !_.has(resp, this.source)) return;
+      if (!_.has(resp, this.source)) return;
       var attrs = resp[this.source];
       delete resp[this.source];
       this.replace(model, attrs);
@@ -179,7 +186,10 @@
       if (!other) return;
 
       // Set up the new association.
-      model.set(this.id, other.id);
+      // model.set(this.id, other.id);
+      var association_id = {};
+      association_id[this.id] = other.id;
+      model.set( association_id , {silent: true} );
       model[this.store] = other;
       this.associate(other, model);
     }
@@ -188,16 +198,16 @@
 
   // # ManyToOne
   // The many side of a one-to-many association.
-  var ManyToOne = function(model, options) {
-    this.required(options, 'inverse', 'collection');
-    Association.apply(this, arguments);
-    _.extend(this, _.pick(options, 'collection', 'inverse', 'id'));
-    model.all()
-      .on('associate:' + this.name, this._associate, this)
-      .on('dissociate:' + this.name, this._dissociate, this);
-  };
+  var ManyToOne = Association.extend({
 
-  _.extend(ManyToOne.prototype, Association.prototype, {
+    constructor: function(model, options) {
+      this.required(options, 'inverse', 'collection');
+      Association.apply(this, arguments);
+      _.extend(this, _.pick(options, 'collection', 'inverse'));
+      model.all()
+        .on('associate:' + this.name, this._associate, this)
+        .on('dissociate:' + this.name, this._dissociate, this);
+    },
 
     // When a model is created, instantiate the associated collection and
     // assign it using `store`.
@@ -227,12 +237,16 @@
     // Use the `source` property to reset the collection with the given models
     // after removing it from the response object.
     parse: function(model, resp) {
-      if (!resp) return;
       var attrs = resp[this.source];
       if (!attrs) return;
       delete resp[this.source];
       var collection = this.get(model);
-      attrs = collection.parse(attrs);
+      attrs = collection.parse(attrs); // run collections custom parse
+      options = collection.options ? collection.options : {};
+
+      //if add option
+      if(options.add)
+        return this.add(attrs, collection);
 
       // If `where` is not specified, reset the collection and bail.
       if (!this.where) {
@@ -253,13 +267,13 @@
 
     // Models added to the collection should be associated with the owner.
     add: function(model, collection) {
-      if (!model || !collection) return;
+      if (_.isEmpty(model) || !collection) return;
       this.associate(model, collection.owner);
     },
 
     // Models removed from the collection should be dissociated from the owner.
     remove: function(model, collection) {
-      if (!model || !collection) return;
+      if (_.isEmpty(model) || !collection) return;
       this.dissociate(model, collection.owner);
     },
 
@@ -275,7 +289,7 @@
     // dissociated from it.
     destroy: function(model) {
       var collection;
-      if (!model || !(collection = model[this.store])) return;
+      if (_.isEmpty(model) || !(collection = model[this.store])) return;
       collection.each(function(other) {
         this.dissociate(other, model);
       }, this);
@@ -283,14 +297,14 @@
 
     // Associated models should be added to the collection.
     _associate: function(model, other) {
-      if (!model || !other) return;
+      if (_.isEmpty(model) || !other) return;
       if (this.where && !this.where(other)) return;
       this.get(model).add(other);
     },
 
     // Dissociated models should be removed from the collection.
     _dissociate: function(model, other) {
-      if (!model || !other || !model[this.store]) return;
+      if (_.isEmpty(model) || !other || !model[this.store]) return;
       model[this.store].remove(other);
     }
 
@@ -299,15 +313,15 @@
   // # ManyToMany
   //
   // One side of a many-to-many association.
-  var ManyToMany = function(model, options) {
-    this.required(options, 'collection', 'through', 'source');
-    Association.apply(this, arguments);
-    _.extend(this, _.pick(options, 'collection', 'through'));
-    this._associate = this.andThis(this._associate);
-    this._dissociate = this.andThis(this._dissociate);
-  };
+  var ManyToMany = Association.extend({
 
-  _.extend(ManyToMany.prototype, Association.prototype, {
+    constructor: function(model, options) {
+      this.required(options, 'collection', 'through', 'source');
+      Association.apply(this, arguments);
+      _.extend(this, _.pick(options, 'collection', 'through'));
+      this._associate = this.andThis(this._associate);
+      this._dissociate = this.andThis(this._dissociate);
+    },
 
     // When a new model is created, assign the getter.
     create: function(model) {
@@ -404,10 +418,7 @@
     //   Defaults to '_' + `name`.
     one: function(name, options) {
       options.name = name;
-      var assoc = new One(this.model, options);
-      if(options.chain===false){
-        return assoc;
-      }
+      new One(this.model, options);
       return this;
     },
 
@@ -428,10 +439,7 @@
     many: function(name, options) {
       options.name = name;
       var Association = options.through ? ManyToMany : ManyToOne;
-      var assoc = new Association(this.model, options);
-      if(options.chain===false){
-        return assoc;
-      }
+      new Association(this.model, options);
       return this;
     }
 
@@ -446,6 +454,7 @@
     initialize: function() {
       // Use `"cid"` for retrieving models by `attributes.cid`.
       this.set(this.cidAttribute, this.cid);
+      this.age = new Date;
 
       // Add the model to `all` for each constructor in its prototype chain.
       var ctor = this.constructor;
@@ -477,6 +486,7 @@
     // the `'parse'` event and remove the appropriate properties after parsing.
     parse: function(resp) {
       this.trigger('parse', this, resp);
+    // Overrides Backbone's `parse` triggers Associations listener.
       return resp;
     }
 
@@ -486,43 +496,48 @@
     // Create a new model after checking for existence of a model with the same
     // id.
     create: function(attrs, options) {
+      var model;
+      var all = this.all();
+      var cid = attrs && attrs[this.prototype.cidAttribute];
       var id = attrs && attrs[this.prototype.idAttribute];
 
-      var model = this.find(attrs);
 
-      if (!options) options = {};
 
       // If `attrs` belongs to an existing model, return it.
-      if (model && attrs === model.attributes) return model;
-
-      // If found by id, modify and return it.
-      if (id && model) {
-        model.set(model.parse(attrs), _.extend(options, {silent: false}));
+      if (cid && (model = all.getByCid(cid)) && model.attributes === attrs) {
         return model;
       }
 
-      // Throw if a model already exists with the same id in a superclass.
-      var parent = this;
-      while (parent = parent.parent) {
-        if (!parent.all().get(id)) continue;
-        throw new Error('Model with id "' + id + '" already exists.');
+      // If a model already exists for `id`, return it.
+      if (id && (model = all.get(id))) {
+        model.parse(attrs);
+        model.set(attrs);
+        return model;
       }
 
-      // Ensure attributes are parsed.
-      options.parse = true;
+      if (this.prototype.uniqueAttributes) {
+        _.each(this.prototype.uniqueAttributes, function(value) {
+          if (_.has(attrs, value)){
+            model = all.find(function(item) { return item.get( value ) == attrs[value]; });
+            if (model) return model;
+          }
+        });
+        if (model) return model;
+      }
 
-      return new this(attrs, options);
-    },
+      if (!id) return new this(attrs, options);
 
-    // ## find
-    // Attempt to find an existing model matching the provided attrs
-    find: function(attrs, merge){
-      if (!attrs) return false;
+      // Throw if a model already exists with the same id in a superclass.
+      var ctor = this;
+      do {
+        if (!ctor.all().get(id)) continue;
+        throw new Error('Model with id "' + id + '" already exists.');
+      } while (ctor = ctor.parent);
 
-      var cid = attrs[this.prototype.cidAttribute];
-      var id = attrs[this.prototype.idAttribute];
-
-      return (cid || id) && this.all().get(cid || id) || false;
+      var newmodel = new this(attrs, options);
+      // if(this.prototype.autoFetchOnCreate)
+        // newmodel.fetch();
+      return newmodel;
     },
 
     // Create associations for a model.
@@ -532,7 +547,7 @@
 
     // Return a collection of all models for a particular constructor.
     all: function() {
-      return this._all || (this._all = new Backbone.Collection);
+      return this._all || (this._all = new Collection());
     },
 
     // Return a hash of all associations for a particular constructor.
@@ -544,10 +559,11 @@
     // respectively.  `reset` removes all model references to allow garbage
     // collection.
     reset: function() {
-      this._all = null;
+      this._all = new Collection();
       this._associations = {};
     }
 
   });
 
+  return Supermodel;
 }));
